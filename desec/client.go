@@ -74,3 +74,49 @@ func UnquoteTXT(record string) string {
 	}
 	return s
 }
+
+// do executes an HTTP request with auth header and single-retry on 429.
+func (c *Client) do(req *http.Request) (*http.Response, error) {
+	req.Header.Set("Authorization", "Token "+c.token)
+	if req.Header.Get("Content-Type") == "" && req.Body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("desec API request failed: %w", err)
+	}
+
+	if resp.StatusCode == http.StatusTooManyRequests {
+		resp.Body.Close()
+		wait := parseRetryAfter(resp.Header.Get("Retry-After"))
+		select {
+		case <-time.After(wait):
+		case <-req.Context().Done():
+			return nil, req.Context().Err()
+		}
+		if req.GetBody != nil {
+			req.Body, _ = req.GetBody()
+		}
+		resp, err = c.httpClient.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("desec API retry failed: %w", err)
+		}
+	}
+
+	return resp, nil
+}
+
+func parseRetryAfter(value string) time.Duration {
+	if value == "" {
+		return 1 * time.Second
+	}
+	seconds, err := strconv.Atoi(value)
+	if err != nil || seconds < 0 {
+		return 1 * time.Second
+	}
+	if seconds > maxRetryAfter {
+		seconds = maxRetryAfter
+	}
+	return time.Duration(seconds) * time.Second
+}
