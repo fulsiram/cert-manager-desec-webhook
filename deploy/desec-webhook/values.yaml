@@ -1,0 +1,28 @@
+# The groupName must be set to a domain you own. It becomes part of the
+# Kubernetes API path and is referenced in Issuer webhook configs.
+# Example: acme.yourdomain.com
+groupName: MUST_BE_SET
+
+certManager:
+  namespace: cert-manager
+  serviceAccountName: cert-manager
+
+image:
+  repository: your-registry/desec-webhook
+  tag: latest
+  pullPolicy: IfNotPresent
+
+nameOverride: ""
+fullnameOverride: ""
+
+service:
+  type: ClusterIP
+  port: 443
+
+resources: {}
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
