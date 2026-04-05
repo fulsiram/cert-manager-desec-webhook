@@ -3,6 +3,7 @@ package desec
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -79,4 +80,92 @@ func (s *Solver) getAPIToken(ch *v1alpha1.ChallengeRequest, cfg Config) (string,
 		return "", fmt.Errorf("key %q not found in secret %s/%s", ref.Key, ch.ResourceNamespace, ref.Name)
 	}
 	return strings.TrimSpace(string(tokenBytes)), nil
+}
+
+func (s *Solver) Present(ch *v1alpha1.ChallengeRequest) error {
+	cfg, err := loadConfig(ch.Config)
+	if err != nil {
+		return err
+	}
+	token, err := s.getAPIToken(ch, cfg)
+	if err != nil {
+		return err
+	}
+	domain, subname := extractDomainAndSubname(ch.ResolvedFQDN, ch.ResolvedZone)
+	client := s.newClient(token)
+	return s.presentWithClient(client, domain, subname, ch.Key)
+}
+
+func (s *Solver) presentWithClient(client DNSClient, domain, subname, key string) error {
+	ctx := context.Background()
+	quotedKey := QuoteTXT(key)
+
+	existing, err := client.GetRRset(ctx, domain, subname)
+	if errors.Is(err, ErrNotFound) {
+		return client.CreateRRset(ctx, domain, RRset{
+			Subname: subname,
+			Type:    "TXT",
+			Records: []string{quotedKey},
+			TTL:     defaultTTL,
+		})
+	}
+	if err != nil {
+		return fmt.Errorf("checking existing RRset: %w", err)
+	}
+
+	for _, r := range existing.Records {
+		if r == quotedKey {
+			return nil
+		}
+	}
+
+	records := append(existing.Records, quotedKey)
+	return client.UpdateRRset(ctx, domain, subname, records)
+}
+
+func (s *Solver) CleanUp(ch *v1alpha1.ChallengeRequest) error {
+	cfg, err := loadConfig(ch.Config)
+	if err != nil {
+		return err
+	}
+	token, err := s.getAPIToken(ch, cfg)
+	if err != nil {
+		return err
+	}
+	domain, subname := extractDomainAndSubname(ch.ResolvedFQDN, ch.ResolvedZone)
+	client := s.newClient(token)
+	return s.cleanUpWithClient(client, domain, subname, ch.Key)
+}
+
+func (s *Solver) cleanUpWithClient(client DNSClient, domain, subname, key string) error {
+	ctx := context.Background()
+	quotedKey := QuoteTXT(key)
+
+	existing, err := client.GetRRset(ctx, domain, subname)
+	if errors.Is(err, ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("checking existing RRset: %w", err)
+	}
+
+	var remaining []string
+	found := false
+	for _, r := range existing.Records {
+		if r == quotedKey {
+			found = true
+			continue
+		}
+		remaining = append(remaining, r)
+	}
+
+	if !found {
+		return nil
+	}
+
+	if len(remaining) == 0 {
+		return client.DeleteRRset(ctx, domain, subname)
+	}
+
+	return client.UpdateRRset(ctx, domain, subname, remaining)
 }
