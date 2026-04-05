@@ -163,3 +163,82 @@ func (c *Client) GetRRset(ctx context.Context, domain, subname string) (*RRset, 
 	}
 	return &rrset, nil
 }
+
+func (c *Client) CreateRRset(ctx context.Context, domain string, rrset RRset) error {
+	body, err := json.Marshal(rrset)
+	if err != nil {
+		return fmt.Errorf("marshaling RRset: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.rrsetCollectionURL(domain), strings.NewReader(string(body)))
+	if err != nil {
+		return fmt.Errorf("building POST request: %w", err)
+	}
+	req.GetBody = func() (io.ReadCloser, error) {
+		return io.NopCloser(strings.NewReader(string(body))), nil
+	}
+
+	resp, err := c.do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("desec API error (POST %d): %s", resp.StatusCode, string(respBody))
+	}
+	return nil
+}
+
+func (c *Client) UpdateRRset(ctx context.Context, domain, subname string, records []string) error {
+	payload := struct {
+		Records []string `json:"records"`
+	}{Records: records}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshaling update: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, c.rrsetURL(domain, subname), strings.NewReader(string(body)))
+	if err != nil {
+		return fmt.Errorf("building PATCH request: %w", err)
+	}
+	req.GetBody = func() (io.ReadCloser, error) {
+		return io.NopCloser(strings.NewReader(string(body))), nil
+	}
+
+	resp, err := c.do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("desec API error (PATCH %d): %s", resp.StatusCode, string(respBody))
+	}
+	return nil
+}
+
+func (c *Client) DeleteRRset(ctx context.Context, domain, subname string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.rrsetURL(domain, subname), nil)
+	if err != nil {
+		return fmt.Errorf("building DELETE request: %w", err)
+	}
+
+	resp, err := c.do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil
+	}
+	if resp.StatusCode != http.StatusNoContent && (resp.StatusCode < 200 || resp.StatusCode > 299) {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("desec API error (DELETE %d): %s", resp.StatusCode, string(respBody))
+	}
+	return nil
+}

@@ -148,3 +148,68 @@ func TestGetRRset_EmptySubname(t *testing.T) {
 	_, err := c.GetRRset(context.Background(), "example.com", "")
 	assert.NoError(t, err)
 }
+
+func TestCreateRRset_Success(t *testing.T) {
+	var gotBody RRset
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPost, r.Method)
+		assert.Equal(t, "/api/v1/domains/example.com/rrsets/", r.URL.Path)
+		json.NewDecoder(r.Body).Decode(&gotBody)
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer srv.Close()
+
+	c := NewClientWithBaseURL("tok", srv.URL)
+	err := c.CreateRRset(context.Background(), "example.com", RRset{
+		Subname: "_acme-challenge",
+		Type:    "TXT",
+		Records: []string{`"test-value"`},
+		TTL:     3600,
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, "_acme-challenge", gotBody.Subname)
+	assert.Equal(t, "TXT", gotBody.Type)
+	assert.Equal(t, []string{`"test-value"`}, gotBody.Records)
+	assert.Equal(t, 3600, gotBody.TTL)
+}
+
+func TestUpdateRRset_Success(t *testing.T) {
+	var gotBody map[string]interface{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPatch, r.Method)
+		assert.Equal(t, "/api/v1/domains/example.com/rrsets/_acme-challenge/TXT/", r.URL.Path)
+		json.NewDecoder(r.Body).Decode(&gotBody)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	c := NewClientWithBaseURL("tok", srv.URL)
+	err := c.UpdateRRset(context.Background(), "example.com", "_acme-challenge", []string{`"v1"`, `"v2"`})
+	assert.NoError(t, err)
+	records := gotBody["records"].([]interface{})
+	assert.Len(t, records, 2)
+}
+
+func TestDeleteRRset_Success(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodDelete, r.Method)
+		assert.Equal(t, "/api/v1/domains/example.com/rrsets/_acme-challenge/TXT/", r.URL.Path)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	c := NewClientWithBaseURL("tok", srv.URL)
+	err := c.DeleteRRset(context.Background(), "example.com", "_acme-challenge")
+	assert.NoError(t, err)
+}
+
+func TestDeleteRRset_NotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	c := NewClientWithBaseURL("tok", srv.URL)
+	err := c.DeleteRRset(context.Background(), "example.com", "_acme-challenge")
+	assert.NoError(t, err) // 404 on delete is fine — idempotent
+}
