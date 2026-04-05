@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 
 	cmmeta "github.com/cert-manager/cert-manager/pkg/apis/meta/v1"
@@ -82,12 +83,21 @@ func (s *Solver) getAPIToken(ch *v1alpha1.ChallengeRequest, cfg Config) (string,
 	return strings.TrimSpace(string(tokenBytes)), nil
 }
 
+func (s *Solver) resolveToken(ch *v1alpha1.ChallengeRequest, cfg Config) (string, error) {
+	if ch.AllowAmbientCredentials {
+		if token := os.Getenv("DESEC_API_TOKEN"); token != "" {
+			return token, nil
+		}
+	}
+	return s.getAPIToken(ch, cfg)
+}
+
 func (s *Solver) Present(ch *v1alpha1.ChallengeRequest) error {
 	cfg, err := loadConfig(ch.Config)
 	if err != nil {
 		return err
 	}
-	token, err := s.getAPIToken(ch, cfg)
+	token, err := s.resolveToken(ch, cfg)
 	if err != nil {
 		return err
 	}
@@ -128,7 +138,7 @@ func (s *Solver) CleanUp(ch *v1alpha1.ChallengeRequest) error {
 	if err != nil {
 		return err
 	}
-	token, err := s.getAPIToken(ch, cfg)
+	token, err := s.resolveToken(ch, cfg)
 	if err != nil {
 		return err
 	}
