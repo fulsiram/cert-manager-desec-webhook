@@ -2,6 +2,7 @@ package desec
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -101,4 +102,49 @@ func TestClientFailsAfterSecond429(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, http.StatusTooManyRequests, resp.StatusCode)
 	resp.Body.Close()
+}
+
+func TestGetRRset_Success(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodGet, r.Method)
+		assert.Equal(t, "/api/v1/domains/example.com/rrsets/_acme-challenge/TXT/", r.URL.Path)
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(RRset{
+			Subname: "_acme-challenge",
+			Type:    "TXT",
+			Records: []string{`"existing-value"`},
+			TTL:     3600,
+		})
+	}))
+	defer srv.Close()
+
+	c := NewClientWithBaseURL("tok", srv.URL)
+	rrset, err := c.GetRRset(context.Background(), "example.com", "_acme-challenge")
+	assert.NoError(t, err)
+	assert.Equal(t, "_acme-challenge", rrset.Subname)
+	assert.Equal(t, []string{`"existing-value"`}, rrset.Records)
+}
+
+func TestGetRRset_NotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	c := NewClientWithBaseURL("tok", srv.URL)
+	_, err := c.GetRRset(context.Background(), "example.com", "_acme-challenge")
+	assert.ErrorIs(t, err, ErrNotFound)
+}
+
+func TestGetRRset_EmptySubname(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v1/domains/example.com/rrsets/.../TXT/", r.URL.Path)
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(RRset{})
+	}))
+	defer srv.Close()
+
+	c := NewClientWithBaseURL("tok", srv.URL)
+	_, err := c.GetRRset(context.Background(), "example.com", "")
+	assert.NoError(t, err)
 }

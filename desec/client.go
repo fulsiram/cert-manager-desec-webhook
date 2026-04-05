@@ -2,8 +2,10 @@ package desec
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -119,4 +121,45 @@ func parseRetryAfter(value string) time.Duration {
 		seconds = maxRetryAfter
 	}
 	return time.Duration(seconds) * time.Second
+}
+
+// rrsetURL builds the URL for a specific RRset endpoint.
+// Empty subname uses "..." per DeSEC docs to avoid URL normalization issues.
+func (c *Client) rrsetURL(domain, subname string) string {
+	sub := subname
+	if sub == "" {
+		sub = "..."
+	}
+	return fmt.Sprintf("%s/api/v1/domains/%s/rrsets/%s/TXT/", c.baseURL, domain, sub)
+}
+
+func (c *Client) rrsetCollectionURL(domain string) string {
+	return fmt.Sprintf("%s/api/v1/domains/%s/rrsets/", c.baseURL, domain)
+}
+
+func (c *Client) GetRRset(ctx context.Context, domain, subname string) (*RRset, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.rrsetURL(domain, subname), nil)
+	if err != nil {
+		return nil, fmt.Errorf("building GET request: %w", err)
+	}
+
+	resp, err := c.do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, ErrNotFound
+	}
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("desec API error (GET %d): %s", resp.StatusCode, string(body))
+	}
+
+	var rrset RRset
+	if err := json.NewDecoder(resp.Body).Decode(&rrset); err != nil {
+		return nil, fmt.Errorf("decoding RRset response: %w", err)
+	}
+	return &rrset, nil
 }
