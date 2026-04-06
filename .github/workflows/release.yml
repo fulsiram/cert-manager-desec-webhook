@@ -111,3 +111,27 @@ jobs:
           tags=$(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON")
           digests=$(printf '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@sha256:%s ' *)
           eval "docker buildx imagetools create $tags $digests"
+
+  chart:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
+
+      - name: Package and push chart
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          version="${VERSION#v}"
+          sed -i "s/^version:.*/version: $version/" deploy/desec-webhook/Chart.yaml
+          sed -i "s|repository:.*|repository: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}|" deploy/desec-webhook/values.yaml
+          sed -i "s/tag:.*/tag: \"$version\"/" deploy/desec-webhook/values.yaml
+          helm package deploy/desec-webhook --version "$version"
+          helm push "desec-webhook-$version.tgz" "oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts"

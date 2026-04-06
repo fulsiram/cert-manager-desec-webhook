@@ -8,9 +8,11 @@ certManager:
   serviceAccountName: cert-manager
 
 image:
-  repository: your-registry/desec-webhook
+  repository: ghcr.io/fulsiram/cert-manager-desec-webhook
   tag: latest
   pullPolicy: IfNotPresent
+
+replicaCount: 1
 
 nameOverride: ""
 fullnameOverride: ""
